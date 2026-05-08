@@ -15,8 +15,8 @@ FROM quay.io/coreos-devel/fedora-bootc-nvidia:${STREAM}-${DRIVER_VERSION}
 ARG IMAGE_USER
 
 # Add cloud-init for AWS SSH key injection
+# Note: cloud-init package's post-install script already enables the services
 RUN dnf install -y cloud-init && \
-    systemctl enable cloud-init cloud-init-local cloud-config cloud-final && \
     dnf clean all
 
 # Create default user (matches FCOS default for AWS)
