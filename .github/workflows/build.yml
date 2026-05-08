@@ -1,0 +1,97 @@
+name: Build GPU Worker Image
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  IMAGE_REGISTRY: ghcr.io
+  IMAGE_NAME: fedora-bootc-gpu-demo
+
+jobs:
+  build:
+    name: Build and Push
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read build arguments
+        id: build-args
+        run: |
+          source build-args.conf
+          echo "stream=${STREAM}" >> $GITHUB_OUTPUT
+          echo "driver_version=${DRIVER_VERSION}" >> $GITHUB_OUTPUT
+          echo "image_user=${IMAGE_USER}" >> $GITHUB_OUTPUT
+
+      - name: Set image tags
+        id: tags
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            TAGS="pr-${{ github.event.number }}"
+          else
+            TAGS="latest ${{ steps.build-args.outputs.stream }}-${{ steps.build-args.outputs.driver_version }}"
+          fi
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        id: build
+        uses: redhat-actions/buildah-build@v2
+        with:
+          containerfiles: ./Containerfile
+          image: ${{ env.IMAGE_REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            STREAM=${{ steps.build-args.outputs.stream }}
+            DRIVER_VERSION=${{ steps.build-args.outputs.driver_version }}
+            IMAGE_USER=${{ steps.build-args.outputs.image_user }}
+          oci: true
+
+      - name: Verify image
+        run: |
+          echo "Built image: ${{ steps.build.outputs.image }}"
+          echo "Tags: ${{ steps.build.outputs.tags }}"
+          podman images
+
+      - name: Push to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        id: push
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build.outputs.image }}
+          tags: ${{ steps.tags.outputs.tags }}
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "## Image Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${{ steps.build.outputs.image }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tags:** ${{ steps.tags.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Driver Version:** ${{ steps.build-args.outputs.driver_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deploy to a node:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "sudo bootc switch ${{ env.IMAGE_REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
